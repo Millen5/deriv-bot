@@ -19,11 +19,11 @@ SYMBOLS = ["BOOM500", "BOOM1000", "R_10", "R_25", "R_75"]
 
 # 💰 Lot size kwa kila market (badili hapa ukitaka)
 STAKES = {
-    "BOOM500": 0.3,
-    "BOOM1000": 0.3,
-    "R_10": 0.5,
-    "R_25": 0.5,
-    "R_75": 0.005
+    "BOOM500": 10,
+    "BOOM1000": 10,
+    "R_10": 10,
+    "R_25": 10,
+    "R_75": 10,
 }
 
 SPIKE_THRESHOLD = 5
