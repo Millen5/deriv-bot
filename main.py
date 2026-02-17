@@ -5,6 +5,7 @@ import os
 
 # 🔐 Token inachukuliwa Railway Variables (USIWEKE token hapa)
 API_TOKEN = os.getenv("API_TOKEN")
+DERIV_APP_ID = os.getenv("DERIV_APP_ID")
 
 # Markets tutakazotrade
 SYMBOLS = ["BOOM500", "BOOM1000", "R_10", "R_25", "R_75"]
