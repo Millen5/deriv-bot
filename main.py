@@ -26,7 +26,7 @@ STAKES = {
     "R_75": 10,
 }
 
-SPIKE_THRESHOLD = 5
+SPIKE_THRESHOLD = 10
 last_prices = {}
 cooldown = {}
 
