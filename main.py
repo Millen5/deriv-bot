@@ -30,7 +30,7 @@ SPIKE_THRESHOLD = 10
 last_prices = {}
 cooldown = {}
 
-def send_trade(ws, symbol):
+def send_trade(ws, symbol,direction):
     stake = STAKES[symbol]
 
     order = {
@@ -39,7 +39,7 @@ def send_trade(ws, symbol):
         "parameters": {
             "amount": stake,
             "basis": "stake",
-            "contract_type": "CALL",
+            "contract_type":direction,
             "currency": "USD",
             "duration": 1,
             "duration_unit": "t",
@@ -57,10 +57,17 @@ def detect_spike(symbol, price, ws):
 
     diff = abs(price - last_prices[symbol])
 
-    if diff >= SPIKE_THRESHOLD and not cooldown[symbol]:
-        print(f"🔥 Spike detected on {symbol}: {diff}")
-        send_trade(ws, symbol)
-        cooldown[symbol] = True
+    if abs(price_change) >= SPIKE_THRESHOLD:
+
+    # Spike UP → SELL (Fall)
+    if price_change > 0:
+        contract_type = "PUT"
+
+    # Spike DOWN → BUY (Rise)
+    else:
+        contract_type = "CALL"
+
+    place_trade(symbol, contract_type)
 
         # Reset cooldown baada ya sekunde 5
         def reset():
