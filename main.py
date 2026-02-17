@@ -2,6 +2,7 @@ import json
 import websocket
 import time
 import os
+import threading
 
 # 🔐 Tunachukua Token + App ID kutoka Railway Variables
 API_TOKEN = os.getenv("API_TOKEN")
@@ -9,37 +10,33 @@ DERIV_APP_ID = os.getenv("DERIV_APP_ID")
 
 # Hakikisha zipo
 if not API_TOKEN or not DERIV_APP_ID:
-    raise ValueError("API_TOKEN or DERIV_APP_ID missing in environment variables")
+    raise Exception("API_TOKEN au DERIV_APP_ID haijawekwa kwenye Environment Variables")
 
-# 🌐 WebSocket URL yenye App ID yako
-WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
+# ⚙️ Settings za Bot
+SYMBOLS = ["R_75"]        # unaweza kuongeza R_100, R_50 baadae
+STAKE = 0.005             # lot size yako
+SPIKE_THRESHOLD = 15      # spike strength (unaweza badilisha)
 
-# 📊 Markets tutakazotrade
-SYMBOLS = ["BOOM500", "BOOM1000", "R_10", "R_25", "R_75"]
+# Storage
+last_prices = {s: None for s in SYMBOLS}
+cooldown = {s: False for s in SYMBOLS}
 
-# 💰 Lot size kwa kila market (badili hapa ukitaka)
-STAKES = {
-    "BOOM500": 10,
-    "BOOM1000": 10,
-    "R_10": 10,
-    "R_25": 10,
-    "R_75": 10,
-}
 
-SPIKE_THRESHOLD = 10
-last_prices = {}
-cooldown = {}
+def authorize(ws):
+    auth_data = {
+        "authorize": API_TOKEN
+    }
+    ws.send(json.dumps(auth_data))
 
-def send_trade(ws, symbol,direction):
-    stake = STAKES[symbol]
 
-    order = {
+def send_trade(ws, symbol, contract_type):
+    trade = {
         "buy": 1,
-        "price": stake,
+        "price": STAKE,
         "parameters": {
-            "amount": stake,
+            "amount": STAKE,
             "basis": "stake",
-            "contract_type":direction,
+            "contract_type": contract_type,  # CALL au PUT
             "currency": "USD",
             "duration": 1,
             "duration_unit": "t",
@@ -47,8 +44,14 @@ def send_trade(ws, symbol,direction):
         }
     }
 
-    ws.send(json.dumps(order))
-    print(f"✅ Trade sent for {symbol} | Stake: {stake}")
+    ws.send(json.dumps(trade))
+    print(f"✅ Trade sent for {symbol} | Direction: {contract_type} | Stake: {STAKE}")
+
+
+def reset(symbol):
+    time.sleep(5)  # cooldown sekunde 5
+    cooldown[symbol] = False
+
 
 def detect_spike(symbol, price, ws):
     if last_prices[symbol] is None:
@@ -56,76 +59,72 @@ def detect_spike(symbol, price, ws):
         return
 
     price_change = price - last_prices[symbol]
-diff = abs(price_change)
+    diff = abs(price_change)
 
-if diff >= SPIKE_THRESHOLD and not cooldown[symbol]:
+    if diff >= SPIKE_THRESHOLD and not cooldown[symbol]:
 
-    
+        # Spike UP → SELL (Fall)
+        if price_change > 0:
+            contract_type = "PUT"
 
-    # Spike UP → SELL (Fall)
-    if price_change > 0:
-        contract_type = "PUT"
+        # Spike DOWN → BUY (Rise)
+        else:
+            contract_type = "CALL"
 
-    # Spike DOWN → BUY (Rise)
-    else:
-        contract_type = "CALL"
+        print(f"🔥 Spike detected on {symbol}: {diff} | Direction: {contract_type}")
 
-    place_trade(symbol, contract_type)
+        send_trade(ws, symbol, contract_type)
 
-        # Reset cooldown baada ya sekunde 5
-        def reset():
-            time.sleep(5)
-            cooldown[symbol] = False
-
-        import threading
-        threading.Thread(target=reset).start()
+        cooldown[symbol] = True
+        threading.Thread(target=reset, args=(symbol,)).start()
 
     last_prices[symbol] = price
 
-def on_open(ws):
-    print("✅ Connected to Deriv")
-
-    # Authorize
-    auth = {"authorize": API_TOKEN}
-    ws.send(json.dumps(auth))
-
-    # Subscribe ticks
-    for symbol in SYMBOLS:
-        tick = {"ticks": symbol, "subscribe": 1}
-        ws.send(json.dumps(tick))
-        last_prices[symbol] = None
-        cooldown[symbol] = False
 
 def on_message(ws, message):
     data = json.loads(message)
 
     if "tick" in data:
         symbol = data["tick"]["symbol"]
-        price = data["tick"]["quote"]
+        price = float(data["tick"]["quote"])
         detect_spike(symbol, price, ws)
 
-    elif "buy" in data:
-        print("📈 CONTRACT OPENED:", data["buy"])
 
-    elif "error" in data:
-        print("❌ ERROR:", data["error"])
+def on_open(ws):
+    print("🔗 Connected to Deriv")
+
+    authorize(ws)
+
+    for symbol in SYMBOLS:
+        sub = {
+            "ticks": symbol,
+            "subscribe": 1
+        }
+        ws.send(json.dumps(sub))
+
 
 def on_error(ws, error):
-    print("❌ WebSocket Error:", error)
+    print("❌ Error:", error)
+
 
 def on_close(ws, close_status_code, close_msg):
-    print("🔌 Connection closed")
+    print("🔌 Connection closed. Reconnecting...")
+    time.sleep(3)
+    start()
+
 
 def start():
+    url = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
+
     ws = websocket.WebSocketApp(
-        WS_URL,
+        url,
         on_open=on_open,
         on_message=on_message,
         on_error=on_error,
-        on_close=on_close,
+        on_close=on_close
     )
 
     ws.run_forever()
 
-if __name__ == "__main__":
-    start()
+
+start()
