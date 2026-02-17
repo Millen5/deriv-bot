@@ -55,9 +55,12 @@ def detect_spike(symbol, price, ws):
         last_prices[symbol] = price
         return
 
-    diff = abs(price - last_prices[symbol])
+    price_change = price - last_prices[symbol]
+diff = abs(price_change)
 
-    if abs(price_change) >= SPIKE_THRESHOLD:
+if diff >= SPIKE_THRESHOLD and not cooldown[symbol]:
+
+    
 
     # Spike UP → SELL (Fall)
     if price_change > 0:
