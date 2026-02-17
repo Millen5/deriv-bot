@@ -96,14 +96,18 @@ def on_close(ws, close_status_code, close_msg):
 
 
 def start():
+    WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
+
     ws = websocket.WebSocketApp(
-        "wss://ws.derivws.com/websockets/v3",
+        WS_URL,
         on_open=on_open,
         on_message=on_message,
         on_error=on_error,
         on_close=on_close,
     )
+
     ws.run_forever()
+
 
 
 if __name__ == "__main__":
