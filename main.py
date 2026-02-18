@@ -5,155 +5,148 @@ import os
 import threading
 from collections import deque
 
-# ============================================
-# 🔐 LOAD ENV VARIABLES (Railway Variables)
-# ============================================
+# ============================================================
+# 🔐 API (Railway Environment Variables)
+# ============================================================
 
 API_TOKEN = os.getenv("API_TOKEN")
 DERIV_APP_ID = os.getenv("DERIV_APP_ID")
 
 if not API_TOKEN or not DERIV_APP_ID:
-    raise ValueError("Missing API_TOKEN or DERIV_APP_ID in environment variables.")
-
-# ============================================
-# ⚙️ BOT SETTINGS
-# ============================================
-
-SYMBOLS = ["R_75", "R_25"]
-
-STAKE = 10                # Amount per trade
-DURATION = 5              # Contract duration
-DURATION_UNIT = "t"       # ticks
-CURRENCY = "USD"
-
-SPIKE_THRESHOLD_R75 = 18
-SPIKE_THRESHOLD_R25 = 9   #Minimum spike size to analyze
-CONFIRMATION_MOVE = 5     # Wait before entering trade
-COOLDOWN_SECONDS = 10      # Wait after trade before next
-
-ZONE_LOOKBACK = 60        # Candles to detect zones
-
-# ============================================
-# 📊 DATA STORAGE
-# ============================================
-
-price_history = {s: deque(maxlen=ZONE_LOOKBACK) for s in SYMBOLS}
-cooldown = {s: False for s in SYMBOLS}
-last_touch_buy = {s: None for s in SYMBOLS}
-last_touch_sell = {s: None for s in SYMBOLS}
-
-# ============================================
-# 🔌 CONNECT TO DERIV
-# ============================================
+    raise ValueError("Missing API_TOKEN or DERIV_APP_ID")
 
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 
+# ============================================================
+# ⚙️ BOT SETTINGS
+# ============================================================
 
-def on_open(ws):
-    print("✅ Connected to Deriv")
+SYMBOLS = ["R_75", "R_25"]
 
-    authorize = {
-        "authorize": API_TOKEN
-    }
-    ws.send(json.dumps(authorize))
+STAKE = 10
+DURATION = 5
+DURATION_UNIT = "t"
+CURRENCY = "USD"
 
-    for symbol in SYMBOLS:
-        subscribe_ticks(ws, symbol)
+# Different sensitivity per market
+SPIKE_THRESHOLD_R75 = 18
+SPIKE_THRESHOLD_R25 = 9
 
+CONFIRMATION_MOVE = 4
+COOLDOWN_SECONDS = 10
 
-def subscribe_ticks(ws, symbol):
-    msg = {
-        "ticks": symbol,
-        "subscribe": 1
-    }
-    ws.send(json.dumps(msg))
-    print(f"📡 Subscribed to {symbol}")
+ZONE_LOOKBACK = 60  # candles to detect zones
 
+# ============================================================
+# 📊 DATA STORAGE
+# ============================================================
 
-# ============================================
-# 📥 RECEIVE MARKET DATA
-# ============================================
+price_history = {s: deque(maxlen=ZONE_LOOKBACK) for s in SYMBOLS}
+last_price = {}
+cooldown = {s: False for s in SYMBOLS}
 
-def on_message(ws, message):
-    data = json.loads(message)
+# ============================================================
+# 📉 SUPPORT / RESISTANCE DETECTION
+# ============================================================
 
-    if "tick" not in data:
+def detect_zones(symbol):
+    prices = list(price_history[symbol])
+
+    if len(prices) < 20:
+        return None, None
+
+    resistance = max(prices)
+    support = min(prices)
+
+    return support, resistance
+
+# ============================================================
+# 📈 SPIKE DETECTION WITH ZONE FILTER
+# ============================================================
+
+def detect_spike(symbol, price, ws):
+
+    if symbol not in last_price:
+        last_price[symbol] = price
         return
 
-    symbol = data["tick"]["symbol"]
-    price = data["tick"]["quote"]
+    diff = price - last_price[symbol]
+    abs_diff = abs(diff)
 
-    process_price(ws, symbol, price)
+    # Select threshold per symbol
+    if symbol == "R_75":
+        spike_threshold = SPIKE_THRESHOLD_R75
+    elif symbol == "R_25":
+        spike_threshold = SPIKE_THRESHOLD_R25
+    else:
+        spike_threshold = 12
 
+    support, resistance = detect_zones(symbol)
 
-# ============================================
-# 🧠 CORE LOGIC
-# ============================================
-
-def process_price(ws, symbol, price):
-    price_history[symbol].append(price)
-
-    if len(price_history[symbol]) < ZONE_LOOKBACK:
+    if support is None:
         return
 
-    if cooldown[symbol]:
-        return
+    # --------------------------------------------------------
+    # SELL only at RESISTANCE
+    # --------------------------------------------------------
+    if price >= resistance and abs_diff >= spike_threshold and not cooldown[symbol]:
 
-    detect_zones_and_trade(ws, symbol, price)
+        print(f"🔴 SELL @ Resistance {symbol}")
 
+        confirm_move(symbol, price, ws, "PUT")
 
-# ============================================
-# 📐 SUPPORT / RESISTANCE DETECTION
-# ============================================
+    # --------------------------------------------------------
+    # BUY only at SUPPORT
+    # --------------------------------------------------------
+    elif price <= support and abs_diff >= spike_threshold and not cooldown[symbol]:
 
-def detect_zones_and_trade(ws, symbol, price):
-    history = list(price_history[symbol])
+        print(f"🟢 BUY @ Support {symbol}")
 
-    support = min(history)
-    resistance = max(history)
+        confirm_move(symbol, price, ws, "CALL")
 
-    zone_size = resistance - support
+    last_price[symbol] = price
 
-    if zone_size < SPIKE_THRESHOLD:
-        return
+# ============================================================
+# ✅ CONFIRMATION FILTER (ANTI-FAKE SPIKE)
+# ============================================================
 
-    # ========================================
-    # BUY LOGIC (Support Rejection)
-    # ========================================
+def confirm_move(symbol, entry_price, ws, contract_type):
 
-    if price <= support:
-        last_touch_buy[symbol] = price
-        print(f"🔎 {symbol} touched SUPPORT")
+    def wait_confirmation():
+        time.sleep(1.2)
 
-    if last_touch_buy[symbol] is not None:
-        if price >= last_touch_buy[symbol] + CONFIRMATION_MOVE:
-            print(f"✅ BUY confirmed on {symbol}")
-            place_trade(ws, symbol, "CALL")
-            last_touch_buy[symbol] = None
-            start_cooldown(symbol)
+        current_price = last_price.get(symbol)
 
-    # ========================================
-    # SELL LOGIC (Resistance Rejection)
-    # ========================================
+        if not current_price:
+            return
 
-    if price >= resistance:
-        last_touch_sell[symbol] = price
-        print(f"🔎 {symbol} touched RESISTANCE")
+        move = abs(current_price - entry_price)
 
-    if last_touch_sell[symbol] is not None:
-        if price <= last_touch_sell[symbol] - CONFIRMATION_MOVE:
-            print(f"✅ SELL confirmed on {symbol}")
-            place_trade(ws, symbol, "PUT")
-            last_touch_sell[symbol] = None
-            start_cooldown(symbol)
+        if move >= CONFIRMATION_MOVE:
+            send_trade(ws, symbol, contract_type)
+            cooldown[symbol] = True
 
+            threading.Thread(target=reset_cooldown, args=(symbol,)).start()
+        else:
+            print("❌ Fake spike avoided")
 
-# ============================================
-# 💰 EXECUTE TRADE
-# ============================================
+    threading.Thread(target=wait_confirmation).start()
 
-def place_trade(ws, symbol, contract_type):
-    trade = {
+# ============================================================
+# ⏱️ COOLDOWN
+# ============================================================
+
+def reset_cooldown(symbol):
+    time.sleep(COOLDOWN_SECONDS)
+    cooldown[symbol] = False
+
+# ============================================================
+# 💰 SEND TRADE
+# ============================================================
+
+def send_trade(ws, symbol, contract_type):
+
+    proposal = {
         "buy": 1,
         "price": STAKE,
         "parameters": {
@@ -167,42 +160,47 @@ def place_trade(ws, symbol, contract_type):
         }
     }
 
-    ws.send(json.dumps(trade))
+    ws.send(json.dumps(proposal))
 
-    print(f"🚀 Trade Sent | {symbol} | {contract_type} | Stake {STAKE}")
+    print(f"✅ Trade sent for {symbol} | {contract_type} | Stake {STAKE}")
 
+# ============================================================
+# 🔌 WEBSOCKET EVENTS
+# ============================================================
 
-# ============================================
-# ⏳ COOLDOWN SYSTEM
-# ============================================
+def on_open(ws):
+    print("🔗 Connected to Deriv")
 
-def start_cooldown(symbol):
-    cooldown[symbol] = True
+    auth = {"authorize": API_TOKEN}
+    ws.send(json.dumps(auth))
 
-    def reset():
-        time.sleep(COOLDOWN_SECONDS)
-        cooldown[symbol] = False
+    for symbol in SYMBOLS:
+        ws.send(json.dumps({
+            "ticks": symbol,
+            "subscribe": 1
+        }))
 
-    threading.Thread(target=reset).start()
+def on_message(ws, message):
 
+    data = json.loads(message)
 
-# ============================================
-# ❌ ERROR HANDLING
-# ============================================
+    if "tick" in data:
+        symbol = data["tick"]["symbol"]
+        price = float(data["tick"]["quote"])
+
+        price_history[symbol].append(price)
+
+        detect_spike(symbol, price, ws)
 
 def on_error(ws, error):
     print("❌ Error:", error)
 
+def on_close(ws, a, b):
+    print("🔌 Connection Closed")
 
-def on_close(ws, close_status_code, close_msg):
-    print("🔌 Connection Closed. Reconnecting...")
-    time.sleep(5)
-    start()
-
-
-# ============================================
-# ▶️ START BOT
-# ============================================
+# ============================================================
+# 🚀 START BOT
+# ============================================================
 
 def start():
     ws = websocket.WebSocketApp(
@@ -212,9 +210,6 @@ def start():
         on_error=on_error,
         on_close=on_close
     )
-
     ws.run_forever()
 
-
-if __name__ == "__main__":
-    start()
+start()
