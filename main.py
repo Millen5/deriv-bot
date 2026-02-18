@@ -29,14 +29,14 @@ CURRENCY = "USD"
 
 # Different sensitivity for each index
 SPIKE_THRESHOLD = {
-    "R_75": 12,
-    "R_25": 6,
+    "R_75": 14,
+    "R_25": 7,
 }
 
-CONFIRMATION_MOVE = 3
+CONFIRMATION_MOVE = 5
 COOLDOWN_SECONDS = 10
 
-ZONE_LOOKBACK = 50  # number of ticks to detect zones
+ZONE_LOOKBACK = 35  # number of ticks to detect zones
 
 # ============================================
 # 📊 DATA STORAGE
