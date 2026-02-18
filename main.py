@@ -24,8 +24,8 @@ WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 SYMBOLS = ["R_25", "R_10"]  # ✅ Stable indices
 
 STAKE = 3                   # lower risk (important!)
-DURATION = 6                # slightly longer = safer
-DURATION_UNIT = "t"
+DURATION = 30                # slightly longer = safer
+DURATION_UNIT = "s"
 CURRENCY = "USD"
 
 ZONE_LOOKBACK = 50          # candles to detect zones
