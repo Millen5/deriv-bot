@@ -4,9 +4,10 @@ import time
 import os
 import threading
 from collections import deque
+import statistics
 
 # ============================================
-# 🔐 API CONFIG (Railway ENV)
+# 🔐 API CONFIG
 # ============================================
 
 API_TOKEN = os.getenv("API_TOKEN")
@@ -18,29 +19,19 @@ if not API_TOKEN or not DERIV_APP_ID:
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 
 # ============================================
-# ⚙️ SCALPER SETTINGS (Optimized for R_10 & R_25)
+# ⚙️ SNIPER SETTINGS (Mean Reversion)
 # ============================================
 
 SYMBOLS = ["R_10", "R_25"]
 
-STAKE = 10
+STAKE = 20
 DURATION = 5
 DURATION_UNIT = "t"
 CURRENCY = "USD"
 
-# Smaller natural movement detection
-MIN_MOVE = {
-    "R_10": 0.3,
-    "R_25": 0.6,
-}
-
-PULLBACK_CONFIRM = {
-    "R_10": 0.5,
-    "R_25": 0.8,
-}
-
-COOLDOWN_SECONDS = 6  # prevents spam trades
-LOOKBACK = 25  # fast scalping window
+LOOKBACK = 40          # history used to calculate mean
+DEVIATION_FACTOR = 2.2 # how far price must stretch
+COOLDOWN = 12          # wait between trades
 
 # ============================================
 # 📊 DATA STORAGE
@@ -50,33 +41,34 @@ price_history = {s: deque(maxlen=200) for s in SYMBOLS}
 last_trade_time = {s: 0 for s in SYMBOLS}
 
 # ============================================
-# 📈 MICRO TREND DETECTION (Scalping Logic)
+# 📈 MEAN REVERSION LOGIC
 # ============================================
 
-def detect_trade(symbol):
+def detect_sniper_entry(symbol):
     prices = price_history[symbol]
 
     if len(prices) < LOOKBACK:
         return None
 
-    recent = list(prices)[-LOOKBACK:]
+    data = list(prices)[-LOOKBACK:]
 
-    high = max(recent)
-    low = min(recent)
-    current = recent[-1]
+    mean_price = statistics.mean(data)
+    std_dev = statistics.stdev(data)
 
-    move = abs(recent[-1] - recent[-2])
+    current_price = data[-1]
 
-    if move < MIN_MOVE[symbol]:
-        return None  # ignore noise only
+    upper_band = mean_price + (std_dev * DEVIATION_FACTOR)
+    lower_band = mean_price - (std_dev * DEVIATION_FACTOR)
 
-    # BUY pullback inside micro uptrend
-    if current <= low + PULLBACK_CONFIRM[symbol]:
-        return "CALL"
-
-    # SELL pullback inside micro downtrend
-    if current >= high - PULLBACK_CONFIRM[symbol]:
+    # 🔴 Overbought → Expect drop
+    if current_price > upper_band:
+        print(f"📉 {symbol} EXTREME HIGH → SELL")
         return "PUT"
+
+    # 🟢 Oversold → Expect bounce
+    if current_price < lower_band:
+        print(f"📈 {symbol} EXTREME LOW → BUY")
+        return "CALL"
 
     return None
 
@@ -100,10 +92,10 @@ def send_trade(ws, symbol, contract_type):
     }
 
     ws.send(json.dumps(order))
-    print(f"✅ {symbol} TRADE → {contract_type}")
+    print(f"✅ TRADE EXECUTED | {symbol} | {contract_type}")
 
 # ============================================
-# 📡 ON MESSAGE
+# 📡 STREAM HANDLER
 # ============================================
 
 def on_message(ws, message):
@@ -119,13 +111,12 @@ def on_message(ws, message):
 
     now = time.time()
 
-    if now - last_trade_time[symbol] < COOLDOWN_SECONDS:
+    if now - last_trade_time[symbol] < COOLDOWN:
         return
 
-    signal = detect_trade(symbol)
+    signal = detect_sniper_entry(symbol)
 
     if signal:
-        print(f"🎯 Entry detected on {symbol}")
         send_trade(ws, symbol, signal)
         last_trade_time[symbol] = now
 
@@ -146,7 +137,7 @@ def on_error(ws, error):
     print("❌ Error:", error)
 
 def on_close(ws, code, msg):
-    print("⚠️ Connection closed — reconnecting...")
+    print("⚠️ Reconnecting...")
     time.sleep(3)
     connect()
 
