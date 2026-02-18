@@ -14,7 +14,7 @@ if not API_TOKEN or not DERIV_APP_ID:
 
 # ⚙️ Settings za Bot
 SYMBOLS = ["R_75"]        # unaweza kuongeza R_100, R_50 baadae
-STAKE = 0.50             # lot size yako
+STAKE = 10             # lot size yako
 SPIKE_THRESHOLD = 12      # spike strength (unaweza badilisha)
 
 # Storage
