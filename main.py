@@ -29,20 +29,17 @@ CURRENCY = "USD"
 
 # Spike sensitivity (different per index)
 SPIKE_THRESHOLD = {
-    "R_75": 14,
     "R_25": 8,
     "R_10": 5,
 }
 
 # Market speed filter (IMPORTANT)
 MIN_TICK_CHANGE = {
-    "R_75": 0.6,
     "R_25": 0.3,
     "R_10": 0.2,
 }
 
 MAX_TICK_CHANGE = {
-    "R_75": 25,
     "R_25": 12,
     "R_10": 8,
 }
