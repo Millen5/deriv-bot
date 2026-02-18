@@ -14,7 +14,7 @@ if not API_TOKEN or not DERIV_APP_ID:
 
 # ⚙️ Settings za Bot
 SYMBOLS = ["R_75"]        # unaweza kuongeza R_100, R_50 baadae
-STAKE = 0.005             # lot size yako
+STAKE = 0.50             # lot size yako
 SPIKE_THRESHOLD = 12      # spike strength (unaweza badilisha)
 
 # Storage
@@ -38,7 +38,7 @@ def send_trade(ws, symbol, contract_type):
             "basis": "stake",
             "contract_type": contract_type,  # CALL au PUT
             "currency": "USD",
-            "duration": 2,
+            "duration": 5,
             "duration_unit": "t",
             "symbol": symbol
         }
