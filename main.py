@@ -26,7 +26,8 @@ DURATION = 5              # Contract duration
 DURATION_UNIT = "t"       # ticks
 CURRENCY = "USD"
 
-SPIKE_THRESHOLD = 18      # Minimum spike size to analyze
+SPIKE_THRESHOLD_R75 = 18
+SPIKE_THRESHOLD_R25 = 9   #Minimum spike size to analyze
 CONFIRMATION_MOVE = 5     # Wait before entering trade
 COOLDOWN_SECONDS = 10      # Wait after trade before next
 
