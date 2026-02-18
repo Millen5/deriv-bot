@@ -20,7 +20,7 @@ WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 # ⚙️ BOT SETTINGS
 # ============================================
 
-SYMBOLS = ["R_10", "R_25", "R_75"]
+SYMBOLS = ["R_10", "R_25"]
 
 STAKE = 10
 DURATION = 5
