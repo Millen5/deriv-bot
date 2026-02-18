@@ -29,13 +29,13 @@ DURATION_UNIT = "t"
 CURRENCY = "USD"
 
 # Different sensitivity per market
-SPIKE_THRESHOLD_R75 = 18
-SPIKE_THRESHOLD_R25 = 9
+SPIKE_THRESHOLD_R75 = 12
+SPIKE_THRESHOLD_R25 = 6
 
-CONFIRMATION_MOVE = 2.5
+CONFIRMATION_MOVE = 2
 COOLDOWN_SECONDS = 10
 
-ZONE_LOOKBACK = 60  # candles to detect zones
+ZONE_LOOKBACK = 40  # candles to detect zones
 
 # ============================================================
 # 📊 DATA STORAGE
