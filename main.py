@@ -22,15 +22,15 @@ if not API_TOKEN or not DERIV_APP_ID:
 SYMBOLS = ["R_75", "R_25"]
 
 STAKE = 10                # Amount per trade
-DURATION = 1              # Contract duration
+DURATION = 5              # Contract duration
 DURATION_UNIT = "t"       # ticks
 CURRENCY = "USD"
 
-SPIKE_THRESHOLD = 12      # Minimum spike size to analyze
-CONFIRMATION_MOVE = 3     # Wait before entering trade
-COOLDOWN_SECONDS = 5      # Wait after trade before next
+SPIKE_THRESHOLD = 18      # Minimum spike size to analyze
+CONFIRMATION_MOVE = 5     # Wait before entering trade
+COOLDOWN_SECONDS = 10      # Wait after trade before next
 
-ZONE_LOOKBACK = 30        # Candles to detect zones
+ZONE_LOOKBACK = 60        # Candles to detect zones
 
 # ============================================
 # 📊 DATA STORAGE
