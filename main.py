@@ -5,7 +5,7 @@ import os
 import threading
 
 # ============================================
-# 🔐 API CONFIG (From Railway Variables)
+# 🔐 API CONFIG (Railway Variables)
 # ============================================
 
 API_TOKEN = os.getenv("API_TOKEN")
@@ -17,26 +17,28 @@ if not API_TOKEN or not DERIV_APP_ID:
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 
 # ============================================
-# ⚙️ BOT SETTINGS
+# ⚙️ BOT SETTINGS (Optimized for Real Edge)
 # ============================================
 
 SYMBOLS = ["R_75", "R_25"]
 
 STAKE = 10
-DURATION = 5
+DURATION = 10              # Increased from 5 → gives market time to react
 DURATION_UNIT = "t"
 CURRENCY = "USD"
 
-# Different sensitivity for each index
+# Different spike sensitivity (R_75 is noisier)
 SPIKE_THRESHOLD = {
-    "R_75": 14,
-    "R_25": 7,
+    "R_75": 22,
+    "R_25": 11,
 }
 
-CONFIRMATION_MOVE = 5
-COOLDOWN_SECONDS = 10
+CONFIRMATION_MOVE = 8      # Must move away from zone first (real rejection)
+COOLDOWN_SECONDS = 25      # Prevent revenge trades
 
-ZONE_LOOKBACK = 35  # number of ticks to detect zones
+ZONE_LOOKBACK = 100        # Detect STRONG zones only
+
+MAX_HISTORY = 300
 
 # ============================================
 # 📊 DATA STORAGE
@@ -46,7 +48,7 @@ price_history = {s: [] for s in SYMBOLS}
 last_trade_time = {s: 0 for s in SYMBOLS}
 
 # ============================================
-# 📈 ZONE DETECTION
+# 📈 STRONG ZONE DETECTION
 # ============================================
 
 def detect_support_resistance(symbol):
@@ -61,6 +63,33 @@ def detect_support_resistance(symbol):
     resistance = max(recent)
 
     return support, resistance
+
+# ============================================
+# 📉 CONFIRM REAL REJECTION (Important!)
+# ============================================
+
+def confirmed_rejection(symbol, zone, direction):
+    """
+    Ensure price actually bounced — not just touched.
+    """
+    prices = price_history[symbol]
+
+    if len(prices) < 5:
+        return False
+
+    last_moves = [
+        prices[-1] - prices[-2],
+        prices[-2] - prices[-3],
+        prices[-3] - prices[-4],
+    ]
+
+    if direction == "BUY":
+        return all(move > 0 for move in last_moves)
+
+    if direction == "SELL":
+        return all(move < 0 for move in last_moves)
+
+    return False
 
 # ============================================
 # 🚀 SEND TRADE
@@ -82,7 +111,7 @@ def send_trade(ws, symbol, contract_type):
     }
 
     ws.send(json.dumps(order))
-    print(f"✅ Trade sent for {symbol} | {contract_type}")
+    print(f"✅ Trade sent | {symbol} | {contract_type}")
 
 # ============================================
 # 📡 ON MESSAGE
@@ -99,7 +128,7 @@ def on_message(ws, message):
 
     price_history[symbol].append(price)
 
-    if len(price_history[symbol]) > 200:
+    if len(price_history[symbol]) > MAX_HISTORY:
         price_history[symbol].pop(0)
 
     support, resistance = detect_support_resistance(symbol)
@@ -112,34 +141,40 @@ def on_message(ws, message):
     if now - last_trade_time[symbol] < COOLDOWN_SECONDS:
         return
 
-    threshold = SPIKE_THRESHOLD[symbol]
-
+    # Check spike strength
     if len(price_history[symbol]) < 2:
         return
 
     move = abs(price_history[symbol][-1] - price_history[symbol][-2])
+    threshold = SPIKE_THRESHOLD[symbol]
 
     if move < threshold:
         return
 
     # ============================================
-    # 🟢 BUY at SUPPORT
+    # 🟢 BUY ONLY AFTER REAL SUPPORT REJECTION
     # ============================================
 
     if abs(price - support) <= CONFIRMATION_MOVE:
-        print(f"🟢 BUY @ Support {symbol}")
-        send_trade(ws, symbol, "CALL")
-        last_trade_time[symbol] = now
+        if confirmed_rejection(symbol, support, "BUY"):
+            print(f"🟢 BUY confirmed at SUPPORT | {symbol}")
+            send_trade(ws, symbol, "CALL")
+            last_trade_time[symbol] = now
+        else:
+            print("⚠️ Fake support touch avoided")
         return
 
     # ============================================
-    # 🔴 SELL at RESISTANCE
+    # 🔴 SELL ONLY AFTER REAL RESISTANCE REJECTION
     # ============================================
 
     if abs(price - resistance) <= CONFIRMATION_MOVE:
-        print(f"🔴 SELL @ Resistance {symbol}")
-        send_trade(ws, symbol, "PUT")
-        last_trade_time[symbol] = now
+        if confirmed_rejection(symbol, resistance, "SELL"):
+            print(f"🔴 SELL confirmed at RESISTANCE | {symbol}")
+            send_trade(ws, symbol, "PUT")
+            last_trade_time[symbol] = now
+        else:
+            print("⚠️ Fake resistance touch avoided")
         return
 
 # ============================================
@@ -161,12 +196,12 @@ def on_error(ws, error):
     print("❌ Error:", error)
 
 def on_close(ws, close_status_code, close_msg):
-    print("⚠️ Connection closed — reconnecting in 5s...")
+    print("⚠️ Connection closed — reconnecting...")
     time.sleep(5)
     connect()
 
 # ============================================
-# 🔁 CONNECT FUNCTION
+# 🔁 CONNECT
 # ============================================
 
 def connect():
@@ -177,18 +212,14 @@ def connect():
         on_error=on_error,
         on_close=on_close
     )
-
     ws.run_forever()
 
 # ============================================
-# ▶️ START BOT THREAD
+# ▶️ START BOT
 # ============================================
 
 threading.Thread(target=connect).start()
 
-# ============================================
-# 🛑 KEEP ALIVE (IMPORTANT FOR RAILWAY)
-# ============================================
-
+# Keep Railway alive
 while True:
     time.sleep(1)
