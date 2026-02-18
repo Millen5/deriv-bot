@@ -3,6 +3,7 @@ import websocket
 import time
 import os
 import threading
+from statistics import mean
 
 # ============================================
 # 🔐 API CONFIG (Railway Variables)
@@ -17,66 +18,81 @@ if not API_TOKEN or not DERIV_APP_ID:
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 
 # ============================================
-# ⚙️ BOT SETTINGS (Balanced Mode)
+# ⚙️ BOT SETTINGS (STABLE MODE)
 # ============================================
 
-SYMBOLS = ["R_75", "R_25"]
+SYMBOLS = ["R_25", "R_10"]  # ✅ Stable indices
 
-STAKE = 10
-DURATION = 8
+STAKE = 3                   # lower risk (important!)
+DURATION = 6                # slightly longer = safer
 DURATION_UNIT = "t"
 CURRENCY = "USD"
 
-# Less strict spike detection
-SPIKE_THRESHOLD = {
-    "R_75": 10,
-    "R_25": 5,
-}
+ZONE_LOOKBACK = 50          # candles to detect zones
+CONFIRMATION_RANGE = 2.5    # how close to zone before entry
+COOLDOWN_SECONDS = 15       # avoid overtrading
 
-CONFIRMATION_MOVE = 3      # Closer entry
-COOLDOWN_SECONDS = 6       # Faster re-entry allowed
-ZONE_LOOKBACK = 25         # Faster zone detection
-
-MAX_HISTORY = 200
+MIN_VOLATILITY = 0.8        # avoid dead market
+TREND_PERIOD = 20           # trend detection
 
 # ============================================
-# 📊 DATA STORAGE
+# 📊 STORAGE
 # ============================================
 
 price_history = {s: [] for s in SYMBOLS}
 last_trade_time = {s: 0 for s in SYMBOLS}
 
 # ============================================
-# 📈 ZONE DETECTION
+# 📈 SUPPORT / RESISTANCE DETECTION
 # ============================================
 
-def detect_support_resistance(symbol):
+def detect_zones(symbol):
     prices = price_history[symbol]
 
     if len(prices) < ZONE_LOOKBACK:
         return None, None
 
     recent = prices[-ZONE_LOOKBACK:]
+
     support = min(recent)
     resistance = max(recent)
 
     return support, resistance
 
 # ============================================
-# 📉 SIMPLE REJECTION CHECK
+# 📊 VOLATILITY FILTER
 # ============================================
 
-def is_rejection(symbol):
+def market_is_active(symbol):
     prices = price_history[symbol]
 
-    if len(prices) < 3:
+    if len(prices) < 10:
         return False
 
-    # Simple reversal detection
-    return (
-        prices[-3] < prices[-2] > prices[-1] or
-        prices[-3] > prices[-2] < prices[-1]
-    )
+    moves = [abs(prices[i] - prices[i-1]) for i in range(1, len(prices))]
+    avg_move = mean(moves[-10:])
+
+    return avg_move >= MIN_VOLATILITY
+
+# ============================================
+# 📉 TREND FILTER (VERY IMPORTANT)
+# ============================================
+
+def detect_trend(symbol):
+    prices = price_history[symbol]
+
+    if len(prices) < TREND_PERIOD:
+        return None
+
+    recent = prices[-TREND_PERIOD:]
+    avg_price = mean(recent)
+
+    if prices[-1] > avg_price:
+        return "UP"
+    elif prices[-1] < avg_price:
+        return "DOWN"
+    else:
+        return None
 
 # ============================================
 # 🚀 SEND TRADE
@@ -98,10 +114,10 @@ def send_trade(ws, symbol, contract_type):
     }
 
     ws.send(json.dumps(order))
-    print(f"✅ Trade sent | {symbol} | {contract_type}")
+    print(f"✅ Trade sent: {symbol} | {contract_type}")
 
 # ============================================
-# 📡 CORE LOGIC
+# 📡 ON TICK MESSAGE
 # ============================================
 
 def on_message(ws, message):
@@ -115,65 +131,64 @@ def on_message(ws, message):
 
     price_history[symbol].append(price)
 
-    if len(price_history[symbol]) > MAX_HISTORY:
+    if len(price_history[symbol]) > 200:
         price_history[symbol].pop(0)
 
-    support, resistance = detect_support_resistance(symbol)
+    support, resistance = detect_zones(symbol)
 
     if support is None:
         return
 
     now = time.time()
 
+    # Cooldown protection
     if now - last_trade_time[symbol] < COOLDOWN_SECONDS:
         return
 
-    if len(price_history[symbol]) < 2:
+    # Skip if market dead
+    if not market_is_active(symbol):
+        print(f"⏸ Market slow — skipping {symbol}")
         return
 
-    move = abs(price_history[symbol][-1] - price_history[symbol][-2])
-    threshold = SPIKE_THRESHOLD[symbol]
+    trend = detect_trend(symbol)
 
-    if move < threshold:
-        return
+    # ============================================
+    # 🟢 BUY ONLY IF TREND IS UP + AT SUPPORT
+    # ============================================
 
-    if not is_rejection(symbol):
-        print("❌ Fake spike avoided")
-        return
-
-    # 🟢 BUY at Support
-    if abs(price - support) <= CONFIRMATION_MOVE:
-        print(f"🟢 BUY @ Support {symbol}")
+    if trend == "UP" and abs(price - support) <= CONFIRMATION_RANGE:
+        print(f"🟢 BUY @{symbol} Support | Trend UP")
         send_trade(ws, symbol, "CALL")
         last_trade_time[symbol] = now
         return
 
-    # 🔴 SELL at Resistance
-    if abs(price - resistance) <= CONFIRMATION_MOVE:
-        print(f"🔴 SELL @ Resistance {symbol}")
+    # ============================================
+    # 🔴 SELL ONLY IF TREND IS DOWN + AT RESISTANCE
+    # ============================================
+
+    if trend == "DOWN" and abs(price - resistance) <= CONFIRMATION_RANGE:
+        print(f"🔴 SELL @{symbol} Resistance | Trend DOWN")
         send_trade(ws, symbol, "PUT")
         last_trade_time[symbol] = now
         return
 
 # ============================================
-# 🔐 CONNECTION HANDLERS
+# 🔐 CONNECT EVENTS
 # ============================================
 
 def on_open(ws):
     print("🔗 Connected to Deriv")
 
-    auth = {"authorize": API_TOKEN}
-    ws.send(json.dumps(auth))
+    ws.send(json.dumps({"authorize": API_TOKEN}))
 
     for symbol in SYMBOLS:
-        sub = {"ticks": symbol, "subscribe": 1}
-        ws.send(json.dumps(sub))
+        ws.send(json.dumps({"ticks": symbol, "subscribe": 1}))
         print(f"📡 Subscribed to {symbol}")
 
 def on_error(ws, error):
     print("❌ Error:", error)
 
-def on_close(ws, close_status_code, close_msg):
+def on_close(ws, code, msg):
     print("⚠️ Connection closed — reconnecting...")
     time.sleep(5)
     connect()
@@ -190,6 +205,7 @@ def connect():
         on_error=on_error,
         on_close=on_close
     )
+
     ws.run_forever()
 
 # ============================================
