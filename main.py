@@ -3,9 +3,10 @@ import websocket
 import time
 import os
 import threading
+from collections import deque
 
 # ============================================
-# 🔐 API CONFIG (Railway Variables)
+# 🔐 API CONFIG (Railway ENV)
 # ============================================
 
 API_TOKEN = os.getenv("API_TOKEN")
@@ -17,7 +18,7 @@ if not API_TOKEN or not DERIV_APP_ID:
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 
 # ============================================
-# ⚙️ BOT SETTINGS
+# ⚙️ SCALPER SETTINGS (Optimized for R_10 & R_25)
 # ============================================
 
 SYMBOLS = ["R_10", "R_25"]
@@ -27,57 +28,63 @@ DURATION = 5
 DURATION_UNIT = "t"
 CURRENCY = "USD"
 
-# Spike sensitivity (different per index)
-SPIKE_THRESHOLD = {
-    "R_25": 8,
-    "R_10": 5,
+# Smaller natural movement detection
+MIN_MOVE = {
+    "R_10": 0.3,
+    "R_25": 0.6,
 }
 
-# Market speed filter (IMPORTANT)
-MIN_TICK_CHANGE = {
-    "R_25": 0.3,
-    "R_10": 0.2,
+PULLBACK_CONFIRM = {
+    "R_10": 0.5,
+    "R_25": 0.8,
 }
 
-MAX_TICK_CHANGE = {
-    "R_25": 12,
-    "R_10": 8,
-}
-
-CONFIRMATION_MOVE = 3
-COOLDOWN_SECONDS = 8
-ZONE_LOOKBACK = 30  # smaller = reacts faster
+COOLDOWN_SECONDS = 6  # prevents spam trades
+LOOKBACK = 25  # fast scalping window
 
 # ============================================
 # 📊 DATA STORAGE
 # ============================================
 
-price_history = {s: [] for s in SYMBOLS}
+price_history = {s: deque(maxlen=200) for s in SYMBOLS}
 last_trade_time = {s: 0 for s in SYMBOLS}
 
 # ============================================
-# 📈 SUPPORT / RESISTANCE DETECTION
+# 📈 MICRO TREND DETECTION (Scalping Logic)
 # ============================================
 
-def detect_support_resistance(symbol):
+def detect_trade(symbol):
     prices = price_history[symbol]
 
-    if len(prices) < ZONE_LOOKBACK:
-        return None, None
+    if len(prices) < LOOKBACK:
+        return None
 
-    recent = prices[-ZONE_LOOKBACK:]
+    recent = list(prices)[-LOOKBACK:]
 
-    support = min(recent)
-    resistance = max(recent)
+    high = max(recent)
+    low = min(recent)
+    current = recent[-1]
 
-    return support, resistance
+    move = abs(recent[-1] - recent[-2])
+
+    if move < MIN_MOVE[symbol]:
+        return None  # ignore noise only
+
+    # BUY pullback inside micro uptrend
+    if current <= low + PULLBACK_CONFIRM[symbol]:
+        return "CALL"
+
+    # SELL pullback inside micro downtrend
+    if current >= high - PULLBACK_CONFIRM[symbol]:
+        return "PUT"
+
+    return None
 
 # ============================================
 # 🚀 SEND TRADE
 # ============================================
 
 def send_trade(ws, symbol, contract_type):
-
     order = {
         "buy": 1,
         "price": STAKE,
@@ -93,10 +100,10 @@ def send_trade(ws, symbol, contract_type):
     }
 
     ws.send(json.dumps(order))
-    print(f"✅ Trade sent | {symbol} | {contract_type}")
+    print(f"✅ {symbol} TRADE → {contract_type}")
 
 # ============================================
-# 📡 PRICE STREAM HANDLER
+# 📡 ON MESSAGE
 # ============================================
 
 def on_message(ws, message):
@@ -110,84 +117,41 @@ def on_message(ws, message):
 
     price_history[symbol].append(price)
 
-    if len(price_history[symbol]) > 200:
-        price_history[symbol].pop(0)
-
-    if len(price_history[symbol]) < 2:
-        return
-
     now = time.time()
 
     if now - last_trade_time[symbol] < COOLDOWN_SECONDS:
         return
 
-    support, resistance = detect_support_resistance(symbol)
+    signal = detect_trade(symbol)
 
-    if support is None:
-        return
-
-    # ============================================
-    # 📊 MARKET SPEED FILTER
-    # ============================================
-
-    move = abs(price_history[symbol][-1] - price_history[symbol][-2])
-
-    if move < MIN_TICK_CHANGE[symbol]:
-        print(f"⏸️ Market slow — skipping {symbol}")
-        return
-
-    if move > MAX_TICK_CHANGE[symbol]:
-        print(f"⚠️ Abnormal spike ignored {symbol}")
-        return
-
-    if move < SPIKE_THRESHOLD[symbol]:
-        return
-
-    # ============================================
-    # 🟢 BUY at SUPPORT
-    # ============================================
-
-    if abs(price - support) <= CONFIRMATION_MOVE:
-        print(f"🟢 BUY @ Support {symbol}")
-        send_trade(ws, symbol, "CALL")
+    if signal:
+        print(f"🎯 Entry detected on {symbol}")
+        send_trade(ws, symbol, signal)
         last_trade_time[symbol] = now
-        return
-
-    # ============================================
-    # 🔴 SELL at RESISTANCE
-    # ============================================
-
-    if abs(price - resistance) <= CONFIRMATION_MOVE:
-        print(f"🔴 SELL @ Resistance {symbol}")
-        send_trade(ws, symbol, "PUT")
-        last_trade_time[symbol] = now
-        return
 
 # ============================================
-# 🔐 AUTHORIZE CONNECTION
+# 🔐 CONNECTION EVENTS
 # ============================================
 
 def on_open(ws):
     print("🔗 Connected to Deriv")
 
-    auth = {"authorize": API_TOKEN}
-    ws.send(json.dumps(auth))
+    ws.send(json.dumps({"authorize": API_TOKEN}))
 
     for symbol in SYMBOLS:
-        sub = {"ticks": symbol, "subscribe": 1}
-        ws.send(json.dumps(sub))
+        ws.send(json.dumps({"ticks": symbol, "subscribe": 1}))
         print(f"📡 Subscribed to {symbol}")
 
 def on_error(ws, error):
     print("❌ Error:", error)
 
-def on_close(ws, close_status_code, close_msg):
+def on_close(ws, code, msg):
     print("⚠️ Connection closed — reconnecting...")
-    time.sleep(5)
+    time.sleep(3)
     connect()
 
 # ============================================
-# 🔁 CONNECT FUNCTION
+# 🔁 CONNECT
 # ============================================
 
 def connect():
@@ -198,7 +162,6 @@ def connect():
         on_error=on_error,
         on_close=on_close
     )
-
     ws.run_forever()
 
 # ============================================
@@ -206,10 +169,6 @@ def connect():
 # ============================================
 
 threading.Thread(target=connect).start()
-
-# ============================================
-# 🛑 KEEP ALIVE (Railway Needs This)
-# ============================================
 
 while True:
     time.sleep(1)
